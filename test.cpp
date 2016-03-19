@@ -1,4 +1,5 @@
 #include <iostream>
+#include "tinytest/tinytest.h"
 
 //#define HAS_TR2
 #include "di.h"
@@ -145,59 +146,69 @@ struct T8 {
  * - dependency on Context
  * - getNew without factory, but with instance
  */
-int main()
+
+int test_transitive1() // transitive dependencies
 {
-#if 1
-    { /* Test1: transitive dependencies */
-        di::Context ctx;
-        std::string result = ctx.get<T1_A>().run();
-        std::cout << "Test1 ok: " << (result=="ABC") << "; result: " << result << std::endl;
-    }
-
-    { /* Test2: transitive dependencies rev order*/
-        di::Context ctx;
-        std::string result = ctx.get<T2_C>().run();
-        std::cout << "Test2 ok: " << (result=="CBA") << "; result: " << result << std::endl;
-    }
-
-    { /* Test3: const ref dependency */
-        di::Context ctx;
-        std::string result = ctx.get<T3_A>().run();
-        std::cout << "Test3 ok: " << (result=="AB") << "; result: " << result << std::endl;
-    }
-
-    { /* Test4: polymorphic mock class hierarchy - nonmock picked up by default */
-        di::Context ctx;
-        std::string result = ctx.get<T4_A>().run();
-        std::cout << "Test4 ok: " << (result=="AB") << "; result: " << result << std::endl;
-    }
-
-    { /* Test5: polymorphic mock class - mock can be injected */
-        di::ContextTmpl<T4_B_mock> ctx; //prefer derived mock over base
-        std::string result = ctx.get<T4_A>().run();
-        std::cout << "Test5 ok: " << (result=="ABmock") << "; result: " << result << std::endl;
-    }
-#endif
-    { /* Test6: polymorphic mock class - both base and derived type can be requested, both are the same instance */
-        di::ContextTmpl<T5_dd> ctx;   //all base types are in context, but only 1 derived instance
-        T5&    a = ctx.get<T5>();
-        T5_d&  b = ctx.get<T5_d>();
-        T5_dd& c = ctx.get<T5_dd>();
-        std::cout << "Test6 ok: " << ((&a == &b) && (&a == &c)) << "; result: " << &a << " " << &b << " " << &c << std::endl;
-    }
-
-    { /* Test7: class without factory method (3rd party) - compiles, but throws when used (no factory registered) */
-        di::Context ctx;
-        std::string result;
-        try {
-            ctx.get<T6>();
-        } catch (std::runtime_error& e) {
-            result = e.what();
-        }
-        std::cout << "Test7 ok: " << (result!="") << "; result: " << result << std::endl;
-    }
-
-
-    return 0;
+    di::Context ctx;
+    TINYTEST_STR_EQUAL( "ABC", ctx.get<T1_A>().run().c_str() );
+    return 1;
 }
+
+int test_constRef() // const ref dependency
+{
+    di::Context ctx;
+    TINYTEST_STR_EQUAL( "AB", ctx.get<T3_A>().run().c_str() );
+    return 1;
+}
+
+int test_poly1() // polymorphic mock class hierarchy - nonmock picked up by default
+{
+    di::Context ctx;
+    TINYTEST_STR_EQUAL( "AB", ctx.get<T4_A>().run().c_str() );
+    return 1;
+}
+
+int test_poly2() // polymorphic mock class - mock can be injected
+{
+    di::ContextTmpl<T4_B_mock> ctx; //prefer derived mock over base
+    TINYTEST_STR_EQUAL( "ABmock", ctx.get<T4_A>().run().c_str() );
+    return 1;
+}
+
+int test_poly3() // polymorphic classes - both base and derived reference type can be requested, both are the same instance
+{
+    di::ContextTmpl<T5_dd> ctx;   //all base types are in context, but only 1 derived instance
+    T5&    a = ctx.get<T5>();
+    T5_d&  b = ctx.get<T5_d>();
+    T5_dd& c = ctx.get<T5_dd>();
+    TINYTEST_ASSERT( ((&a == &b) && (&a == &c)) );
+    return 1;
+}
+
+int test_factory1() // class without factory method (3rd party) - compiles, but throws when used (no factory registered)
+{
+    di::Context ctx;
+    try {
+        ctx.get<T6>();
+    } catch (std::runtime_error& e) {
+        return 1;
+    }
+    TINYTEST_ASSERT( false );
+}
+
+
+
+
+TINYTEST_START_SUITE(DI_light);
+  TINYTEST_ADD_TEST(test_transitive1);
+  TINYTEST_ADD_TEST(test_constRef);
+  TINYTEST_ADD_TEST(test_poly1);
+  TINYTEST_ADD_TEST(test_poly2);
+  TINYTEST_ADD_TEST(test_poly3);
+  TINYTEST_ADD_TEST(test_factory1);
+TINYTEST_END_SUITE();
+
+
+
+TINYTEST_MAIN_SINGLE_SUITE(DI_light);
 
