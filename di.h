@@ -19,20 +19,14 @@ class Context
     // A single item in the context
     struct CtxItem
     {
-        void* instancePtr = nullptr;
-        bool marker = false;
-        std::function<void(void)> factory;
-        void (*deleter)(void*) = nullptr;
-        std::type_index derivedType = std::type_index(typeid(void));
-
-        CtxItem() = default;
-        ~CtxItem()
-        {
-            if (instancePtr != nullptr && deleter != nullptr)
-                deleter(instancePtr);
-        }
+        void* instancePtr = nullptr;                                    // object instance pointer
+        bool marker = false;                                            // flag used to detect circular dependencies
+        std::function<void(void)> factory;                              // factory fn. to create a new object instance
+        void (*deleter)(void*) = nullptr;                               // delete fn. (calls proper destructor)
+        std::type_index derivedType = std::type_index(typeid(void));    // a derived type (eg. implementation of an interface)
 
         // non-copyable, non-moveable
+        CtxItem() = default;
         CtxItem(const CtxItem& rhs) = delete;
         CtxItem& operator=(const CtxItem& rhs) = delete;
         CtxItem(CtxItem&& rhs) = delete;
@@ -54,7 +48,7 @@ class Context
 
     // The object storage
     std::map<std::type_index, CtxItem> items;
-    std::vector<std::type_index> constructionOrder;
+    std::vector<CtxItem*> constructionOrder;
 
 
 
@@ -170,7 +164,10 @@ class Context
         item.instancePtr = static_cast<void*>(instance);
 
         if (takeOwnership)
+        {
             item.deleter = [](void* ptr) { delete( static_cast<T*>(ptr) ); };
+            constructionOrder.push_back(&item);
+        }
     }
 
 public:
@@ -181,7 +178,8 @@ public:
 
     ~Context()
     {
-       // dump("destructor");
+        for (auto it = constructionOrder.rbegin(); it != constructionOrder.rend(); it++)
+            (**it).deleter((**it).instancePtr);
     }
 
     void dump(const std::string& msg)
@@ -209,8 +207,6 @@ public:
             item.factory();
             item.marker = false;
         }
-
-        //dump("get");
 
         return *(static_cast<T*>(item.instancePtr));
     }

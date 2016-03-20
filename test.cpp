@@ -4,24 +4,28 @@
 //#define HAS_TR2
 #include "di.h"
 
+std::string destructionMark;
 
 /********************************************************************/
 /* Test set 1: transitive dependencies: A depends on B depends on C */
 /********************************************************************/
 struct T1_C {
     std::string run() { return "C"; }
+    ~T1_C() { destructionMark += "C";  }
     static auto factory() { return new T1_C; }
 };
 
 struct T1_B {
     T1_C& c;
     std::string run() { return "B" + c.run(); }
+    ~T1_B() { destructionMark += "B"; }
     static auto factory(T1_C& c) { return new T1_B{c}; }
 };
 
 struct T1_A {
     T1_B& b;
     std::string run() { return "A" + b.run(); }
+    ~T1_A() { destructionMark += "A"; }
     static auto factory(T1_B& b) { return new T1_A{b}; }
 };
 
@@ -32,18 +36,21 @@ struct T1_A {
 /************************************************************/
 struct T2_A {
     std::string run() { return "A"; }
+    ~T2_A() { destructionMark += "A";  }
     static auto factory() { return new T2_A; }
 };
 
 struct T2_B {
     T2_A& a;
     std::string run() { return "B" + a.run(); }
+    ~T2_B() { destructionMark += "B";  }
     static auto factory(T2_A& a) { return new T2_B{a}; }
 };
 
 struct T2_C {
     T2_B& b;
     std::string run() { return "C" + b.run(); }
+    ~T2_C() { destructionMark += "C";  }
     static auto factory(T2_B& b) { return new T2_C{b}; }
 };
 
@@ -94,7 +101,7 @@ struct T4_A {
 /* Test set 5: polymorphic hierarchy */
 /*************************************/
 struct T5 {
-    virtual ~T5() = default;
+    virtual ~T5() { destructionMark += "T5"; }
     static auto factory() { return new T5; }
 };
 
@@ -102,6 +109,7 @@ struct T5_d : public T5{
 #ifndef HAS_TR2
     typedef T5 base;
 #endif
+    virtual ~T5_d() { destructionMark += "T5_d"; }
     static auto factory() { return new T5_d; }
 };
 
@@ -109,6 +117,7 @@ struct T5_dd : public T5_d {
 #ifndef HAS_TR2
     typedef T5_d base;
 #endif
+    virtual ~T5_dd() { destructionMark += "T5_dd"; }
     static auto factory() { return new T5_dd; }
 };
 
@@ -126,19 +135,27 @@ auto T6_factory() { return new T6; }
 
 
 /****************************************************************************/
-/* Test set 8: class without factory method, but other member named factory */
+/* Test set 7: class without factory method, but other member named factory */
 /****************************************************************************/
-struct T8 {
+struct T7 {
     std::string run() { return "A"; }
     int factory;    // must not cause compile error
 };
 
+auto T7_factory() { return new T7; }
+
+
+
+/***************************************/
+/* Test set 8: factory returns nullptr */
+/***************************************/
+struct T8 {
+    static T8* factory() { return nullptr; }
+};
+
+
 
 /*
- * - class with external factory
- * - class with factory member variable
- * - (factory signature error)
- * - nullptr instance
  * - multiple instance
  * - multiple factory
  * - cyclic dependency
@@ -147,35 +164,70 @@ struct T8 {
  * - getNew without factory, but with instance
  */
 
-int test_transitive1() // transitive dependencies
+
+// transitive dependencies automatically detected and injected (without explicit registratin in context)
+int test_transitive1()
 {
     di::Context ctx;
     TINYTEST_STR_EQUAL( "ABC", ctx.get<T1_A>().run().c_str() );
     return 1;
 }
 
-int test_constRef() // const ref dependency
+
+// destruction order must be the reverese of construnction (must not depend on map key)
+int test_destruction1()
+{
+    destructionMark.clear();
+    {
+        di::Context ctx;
+        ctx.get<T1_A>().run();
+    }
+    TINYTEST_STR_EQUAL( "ABC", destructionMark.c_str() );
+    return 1;
+}
+
+// destruction order must be the reverese of construnction (must not depend on map key)
+int test_destruction2()
+{
+    destructionMark.clear();
+    {
+        di::Context ctx;
+        ctx.get<T2_C>().run();
+    }
+    TINYTEST_STR_EQUAL( "CBA", destructionMark.c_str() );
+    return 1;
+}
+
+
+// const ref dependencies are supported
+int test_constRef()
 {
     di::Context ctx;
     TINYTEST_STR_EQUAL( "AB", ctx.get<T3_A>().run().c_str() );
     return 1;
 }
 
-int test_poly1() // polymorphic mock class hierarchy - nonmock picked up by default
+
+// polymorphic mock class hierarchy - nonmock picked up by default
+int test_poly1()
 {
     di::Context ctx;
     TINYTEST_STR_EQUAL( "AB", ctx.get<T4_A>().run().c_str() );
     return 1;
 }
 
-int test_poly2() // polymorphic mock class - mock can be injected
+
+// polymorphic mock class - mock can be injected
+int test_poly2()
 {
     di::ContextTmpl<T4_B_mock> ctx; //prefer derived mock over base
     TINYTEST_STR_EQUAL( "ABmock", ctx.get<T4_A>().run().c_str() );
     return 1;
 }
 
-int test_poly3() // polymorphic classes - both base and derived reference type can be requested, both are the same instance
+
+// polymorphic classes - both base and derived reference type can be requested, both are the same instance
+int test_poly3()
 {
     di::ContextTmpl<T5_dd> ctx;   //all base types are in context, but only 1 derived instance
     T5&    a = ctx.get<T5>();
@@ -185,27 +237,79 @@ int test_poly3() // polymorphic classes - both base and derived reference type c
     return 1;
 }
 
-int test_factory1() // class without factory method (3rd party) - compiles, but throws when used (no factory registered)
+
+// polymorphic classes - destructors are correctly called
+int test_poly4()
+{
+    destructionMark.clear();
+    {
+        di::ContextTmpl<T5_dd> ctx;   // all base types are in context, but only 1 derived instance
+        ctx.get<T5>();                // returns derived instance
+    }
+    TINYTEST_STR_EQUAL( "T5_ddT5_dT5", destructionMark.c_str() );   // derived and base destructors called
+    return 1;
+}
+
+
+// class without factory method (3rd party) - compiles, but throws when used (no factory registered)
+int test_factory1()
 {
     di::Context ctx;
     try {
         ctx.get<T6>();
     } catch (std::runtime_error& e) {
+        //std::cout << e.what() << std::endl;
         return 1;
     }
     TINYTEST_ASSERT( false );
 }
 
 
+// class without factory method (3rd party) - self standing factory method can be registered
+int test_factory2()
+{
+    di::ContextTmpl<> ctx(T6_factory);
+    TINYTEST_STR_EQUAL( "A", ctx.get<T6>().run().c_str() );
+    return 1;
+}
+
+
+// class without factory method (3rd party), but other member named factory compiles and ignored
+int test_factory3()
+{
+    di::ContextTmpl<> ctx(T7_factory);
+    TINYTEST_STR_EQUAL( "A", ctx.get<T7>().run().c_str() );
+    return 1;
+}
+
+
+// nullptr instance can't be added to the context
+int test_instance1()
+{
+    di::Context ctx;
+    try {
+        ctx.get<T8>();
+    } catch (std::runtime_error& e) {
+        //std::cout << e.what() << std::endl;
+        return 1;
+    }
+    TINYTEST_ASSERT( false );
+}
 
 
 TINYTEST_START_SUITE(DI_light);
-  TINYTEST_ADD_TEST(test_transitive1);
-  TINYTEST_ADD_TEST(test_constRef);
-  TINYTEST_ADD_TEST(test_poly1);
-  TINYTEST_ADD_TEST(test_poly2);
-  TINYTEST_ADD_TEST(test_poly3);
-  TINYTEST_ADD_TEST(test_factory1);
+    TINYTEST_ADD_TEST(test_transitive1);
+    TINYTEST_ADD_TEST(test_destruction1);
+    TINYTEST_ADD_TEST(test_destruction2);
+    TINYTEST_ADD_TEST(test_constRef);
+    TINYTEST_ADD_TEST(test_poly1);
+    TINYTEST_ADD_TEST(test_poly2);
+    TINYTEST_ADD_TEST(test_poly3);
+    TINYTEST_ADD_TEST(test_poly4);
+    TINYTEST_ADD_TEST(test_factory1);
+    TINYTEST_ADD_TEST(test_factory2);
+    TINYTEST_ADD_TEST(test_factory3);
+    TINYTEST_ADD_TEST(test_instance1);
 TINYTEST_END_SUITE();
 
 
