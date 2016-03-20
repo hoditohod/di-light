@@ -155,14 +155,51 @@ struct T8 {
 
 
 
-/*
- * - multiple instance
- * - multiple factory
- * - cyclic dependency
- * - class without factory but instance added
- * - dependency on Context
- * - getNew without factory, but with instance
- */
+/****************************************************/
+/* Test set 9: multiple factories for the same type */
+/****************************************************/
+struct T9_A {
+    static T9_A* factory() { return new T9_A; }
+};
+
+struct T9_B {
+    static T9_A* factory() { return new T9_A; }
+};
+
+
+
+/**********************************/
+/* Test set 10: cyclic dependency */
+/**********************************/
+struct T10_B;
+
+struct T10_A {
+    T10_B& b;
+    static auto factory(T10_B& b) { return new T10_A{b}; }
+};
+
+struct T10_B {
+    T10_A& a;
+    static auto factory(T10_A& a) { return new T10_B{a}; }
+};
+
+
+
+/*****************************************/
+/* Test set 11: class depends on Context */
+/*****************************************/
+struct T11 {
+    di::Context& ctx;
+    std::string run() { return "A"; }
+    static auto factory(di::Context& ctx) { return new T11{ctx}; }
+};
+
+
+
+
+
+
+
 
 
 // transitive dependencies automatically detected and injected (without explicit registratin in context)
@@ -283,6 +320,19 @@ int test_factory3()
 }
 
 
+// multiple factories with the same return type are not allowed
+int test_factory4()
+{
+    try {
+        di::ContextTmpl<T9_A, T9_B> ctx;
+    } catch (std::runtime_error& e) {
+        //std::cout << e.what() << std::endl;
+        return 1;
+    }
+    TINYTEST_ASSERT( false );
+}
+
+
 // nullptr instance can't be added to the context
 int test_instance1()
 {
@@ -297,6 +347,31 @@ int test_instance1()
 }
 
 
+// cyclic dependencies are detected runtime
+int test_cyclic()
+{
+    di::Context ctx;
+    try {
+        ctx.get<T10_A>();
+    } catch (std::runtime_error& e) {
+        //std::cout << e.what() << std::endl;
+        return 1;
+    }
+    TINYTEST_ASSERT( false );
+}
+
+
+// a class may depend on the Context itself
+int test_dependOnContext()
+{
+    di::Context ctx;
+    TINYTEST_STR_EQUAL( "A", ctx.get<T11>().run().c_str() );
+    return 1;
+}
+
+
+
+
 TINYTEST_START_SUITE(DI_light);
     TINYTEST_ADD_TEST(test_transitive1);
     TINYTEST_ADD_TEST(test_destruction1);
@@ -309,10 +384,12 @@ TINYTEST_START_SUITE(DI_light);
     TINYTEST_ADD_TEST(test_factory1);
     TINYTEST_ADD_TEST(test_factory2);
     TINYTEST_ADD_TEST(test_factory3);
+    TINYTEST_ADD_TEST(test_factory4);
     TINYTEST_ADD_TEST(test_instance1);
+    TINYTEST_ADD_TEST(test_cyclic);
+    TINYTEST_ADD_TEST(test_dependOnContext);
 TINYTEST_END_SUITE();
 
 
 
 TINYTEST_MAIN_SINGLE_SUITE(DI_light);
-
