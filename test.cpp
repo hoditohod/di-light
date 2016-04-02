@@ -9,62 +9,78 @@ using std::make_shared;
 
 std::string destructionMark;
 
-/********************************************************************/
-/* Test set 1: transitive dependencies: A depends on B depends on C */
-/********************************************************************/
+/*************************************************************************/
+/* Test set 1: transitive dependencies: A depends on B&C, B depends on D */
+/*************************************************************************/
+struct T1_D {
+    std::string run() { return "D"; }
+    ~T1_D() { destructionMark += "D";  }
+};
+
 struct T1_C {
     std::string run() { return "C"; }
     ~T1_C() { destructionMark += "C";  }
-    static auto factory() { return make_shared<T1_C>(); }
 };
 
 struct T1_B {
-    T1_B( shared_ptr<T1_C> c) : c(c) {}
-
-    shared_ptr<T1_C> c;
-    std::string run() { return "B" + c->run(); }
+    T1_B( shared_ptr<T1_D> d) : d(d) {}
     ~T1_B() { destructionMark += "B"; }
-    static auto factory(shared_ptr<T1_C> c) { return make_shared<T1_B>(c); }
+
+    shared_ptr<T1_D> d;
+
+    std::string run() { return "B" + d->run(); }
+
+    using dependencies = std::tuple<T1_D>;
 };
 
 struct T1_A {
-    T1_A( shared_ptr<T1_B> b) : b(b) {}
+    T1_A( shared_ptr<T1_B> b, shared_ptr<T1_C> c) : b(b), c(c) {}
+    ~T1_A() { destructionMark += "A"; }
 
     shared_ptr<T1_B> b;
-    std::string run() { return "A" + b->run(); }
-    ~T1_A() { destructionMark += "A"; }
-    static auto factory(shared_ptr<T1_B> b) { return make_shared<T1_A>(b); }
-};
+    shared_ptr<T1_C> c;
+
+    std::string run() { return "A" + b->run() + c->run(); }
+
+    using dependencies = std::tuple<T1_B, T1_C>;
+ };
 
 
 
-
-#if 0
-
-/************************************************************/
-/* Test set 2: transitive dependencies (reverse name order) */
-/************************************************************/
-struct T2_A {
-    std::string run() { return "A"; }
-    ~T2_A() { destructionMark += "A";  }
-    static auto factory() { return new T2_A; }
-};
-
-struct T2_B {
-    T2_A& a;
-    std::string run() { return "B" + a.run(); }
-    ~T2_B() { destructionMark += "B";  }
-    static auto factory(T2_A& a) { return new T2_B{a}; }
+/**************************************************************************************/
+/* Test set 2: transitive dependencies: A depends on B&C, B depends on D (use inject) */
+/**************************************************************************************/
+struct T2_D {
+    std::string run() { return "D"; }
+    ~T2_D() { destructionMark += "D";  }
 };
 
 struct T2_C {
-    T2_B& b;
-    std::string run() { return "C" + b.run(); }
+    std::string run() { return "C"; }
     ~T2_C() { destructionMark += "C";  }
-    static auto factory(T2_B& b) { return new T2_C{b}; }
+};
+
+struct T2_B {
+    T2_B( shared_ptr<di::Context> ctx) { ctx->inject(d); }
+    ~T2_B() { destructionMark += "B"; }
+
+    shared_ptr<T2_D> d;
+
+    std::string run() { return "B" + d->run(); }
+};
+
+struct T2_A {
+    T2_A( shared_ptr<di::Context> ctx) { ctx->inject(b,c); }
+    ~T2_A() { destructionMark += "A"; }
+
+    shared_ptr<T2_B> b;
+    shared_ptr<T2_C> c;
+
+    std::string run() { return "A" + b->run() + c->run(); }
 };
 
 
+#if 0
 
 /************************************/
 /* Test set 3: const ref dependency */
@@ -203,7 +219,7 @@ struct T11 {
     std::string run() { return "A"; }
     static auto factory(di::Context& ctx) { return new T11{ctx}; }
 };
-
+#endif
 
 
 
@@ -215,11 +231,11 @@ struct T11 {
 // transitive dependencies automatically detected and injected (without explicit registratin in context)
 int test_transitive1()
 {
-    di::Context ctx;
-    TINYTEST_STR_EQUAL( "ABC", ctx.get<T1_A>().run().c_str() );
+    TINYTEST_STR_EQUAL( "ABDC", di::Context::create<T1_A>()->run().c_str() );
     return 1;
 }
 
+#if 0
 
 // destruction order must be the reverese of construnction (must not depend on map key)
 int test_destruction1()
@@ -379,32 +395,28 @@ int test_dependOnContext()
     return 1;
 }
 
+#endif
 
 
 
 TINYTEST_START_SUITE(DI_light);
     TINYTEST_ADD_TEST(test_transitive1);
-    TINYTEST_ADD_TEST(test_destruction1);
-    TINYTEST_ADD_TEST(test_destruction2);
-    TINYTEST_ADD_TEST(test_constRef);
-    TINYTEST_ADD_TEST(test_poly1);
-    TINYTEST_ADD_TEST(test_poly2);
-    TINYTEST_ADD_TEST(test_poly3);
-    TINYTEST_ADD_TEST(test_poly4);
-    TINYTEST_ADD_TEST(test_factory1);
-    TINYTEST_ADD_TEST(test_factory2);
-    TINYTEST_ADD_TEST(test_factory3);
-    TINYTEST_ADD_TEST(test_factory4);
-    TINYTEST_ADD_TEST(test_instance1);
-    TINYTEST_ADD_TEST(test_cyclic);
-    TINYTEST_ADD_TEST(test_dependOnContext);
+//    TINYTEST_ADD_TEST(test_destruction1);
+//    TINYTEST_ADD_TEST(test_destruction2);
+//    TINYTEST_ADD_TEST(test_constRef);
+//    TINYTEST_ADD_TEST(test_poly1);
+//    TINYTEST_ADD_TEST(test_poly2);
+//    TINYTEST_ADD_TEST(test_poly3);
+//    TINYTEST_ADD_TEST(test_poly4);
+//    TINYTEST_ADD_TEST(test_factory1);
+//    TINYTEST_ADD_TEST(test_factory2);
+//    TINYTEST_ADD_TEST(test_factory3);
+//    TINYTEST_ADD_TEST(test_factory4);
+//    TINYTEST_ADD_TEST(test_instance1);
+//    TINYTEST_ADD_TEST(test_cyclic);
+//    TINYTEST_ADD_TEST(test_dependOnContext);
 TINYTEST_END_SUITE();
 
 
 TINYTEST_MAIN_SINGLE_SUITE(DI_light);
-#endif
 
-int main()
-{
-    return 0;
-}

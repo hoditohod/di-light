@@ -38,8 +38,50 @@
 
 #define INPLACE
 
+/* TODO:
+ * - check base type with enable_if in declareBaseTypes
+ * - check for std::tuple in dependencies typedef
+ * - figure out protptype scope!
+ */
+
 
 namespace di {
+namespace detail {
+
+// A few SFINAE traits to check if various typedefs are present in a class
+
+template<typename T>
+class has_singleton_typedef
+{
+    template<typename C> static char test(typename C::singleton*);
+    template<typename C> static int test(...);
+public:
+    static const bool value = sizeof(test<T>(nullptr)) == sizeof(char);
+};
+
+
+template<typename T>
+class has_dependencies_typedef
+{
+    template<typename C> static char test(typename C::dependencies*);
+    template<typename C> static int test(...);
+public:
+    static const bool value = sizeof(test<T>(nullptr)) == sizeof(char);
+};
+
+
+template<typename T>
+class has_base_typedef
+{
+    template<typename C> static char test(typename C::base*);
+    template<typename C> static int test(...);
+public:
+    static const bool value = sizeof(test<T>(nullptr)) == sizeof(char);
+};
+
+} //endof namespace detail
+
+
 
 class Context : public std::enable_shared_from_this<Context>
 {
@@ -92,9 +134,9 @@ class Context : public std::enable_shared_from_this<Context>
 
 
 
-    // The object storage
+    // The object storage (std::type_index removes const/volatile qualifiers)
     std::map<std::type_index, CtxItem> items;
-    std::weak_ptr<Context> self;
+    //std::weak_ptr<Context> self;
 
 
 
@@ -110,7 +152,7 @@ class Context : public std::enable_shared_from_this<Context>
     template <typename T, typename std::enable_if< T::empty::value >::type* = nullptr >
     void declareBaseTypes(std::type_index&) { }
 #else
-    template<typename T, typename T::base* = nullptr>
+    template<typename T, typename T::base* = nullptr>   // TODO: rewrite with enable_if
     void declareBaseTypes(std::type_index& derivedType)
     {
         items[ std::type_index(typeid( typename T::base )) ].derivedType = derivedType;
@@ -120,6 +162,16 @@ class Context : public std::enable_shared_from_this<Context>
     template <typename T>
     void declareBaseTypes(...) { }
 #endif
+
+    template <typename T>
+    inline void declareBaseTypesDispatch(std::type_index& instanceTypeIdx)
+    {
+#ifdef HAS_TR2
+        declareBaseTypes< typename std::tr2::bases<T>::type >( instanceTypeIdx );
+#else
+        declareBaseTypes<T>( instanceTypeIdx );
+#endif
+    }
 
 
 
@@ -210,6 +262,19 @@ class Context : public std::enable_shared_from_this<Context>
         std::cout << "context constructor\n";
     }
 
+
+    template<typename T, typename std::enable_if< detail::has_singleton_typedef<T>::value >::type* = nullptr >
+    constexpr bool isSingletonScope()
+    {
+        return T::singleton::value;
+    }
+
+    template<typename T, typename std::enable_if< !detail::has_singleton_typedef<T>::value >::type* = nullptr >
+    constexpr bool isSingletonScope()
+    {
+        return true;
+    }
+
 public:
 
     ~Context()
@@ -227,6 +292,137 @@ public:
         }
     }
 
+#if 0
+    // easy way: T is default constructible
+    template<typename T, typename std::enable_if< std::is_default_constructible<T>::value >::type* = nullptr >
+    void createInstance()
+    {
+        std::cout << "Default constructing: " << typeid(T).name() << std::endl;
+
+        auto instanceTypeIdx = std::type_index(typeid(T));
+
+#if 0   //do we need this here?
+#ifdef HAS_TR2
+        declareBaseTypes< typename std::tr2::bases<InstanceType>::type >( instanceTypeIdx );
+#else
+        declareBaseTypes<InstanceType>( instanceTypeIdx );
+#endif
+#endif
+
+        CtxItem& item = items[ instanceTypeIdx ];
+
+        // placement new, explicit destruction
+        new(&item.storage) std::shared_ptr<T>( std::make_shared<T>() ); //this is not too efficient
+        item.deleter = [](void* ptr) {
+            std::cout << "deleter " << typeid(T).name() << std::endl;
+            static_cast< std::shared_ptr<T>* >(ptr) -> ~shared_ptr();
+        };
+    }
+#endif
+
+    // Case1: T is default constructible
+    template<typename T, bool Strict, typename std::enable_if< std::is_default_constructible<T>::value >::type* = nullptr >
+    void registerClass()
+    {
+        std::cout << "Default constructing: " << typeid(T).name() << std::endl;
+
+        auto instanceTypeIdx = std::type_index(typeid(T));
+        declareBaseTypesDispatch<T>( instanceTypeIdx );
+
+        CtxItem& item = items[ instanceTypeIdx ];
+
+        if (item.factory)
+            throw std::runtime_error(std::string("Factory already registed for type: ") + typeid(T).name());
+
+        item.factory = [this](){ addInstance( std::make_shared<T>() ); };
+        item.singleton = isSingletonScope<T>();
+        std::cout << "Singleton: " << item.singleton << std::endl;
+
+    }
+
+    // Case2: T is constructible with std::shared_ptr<Context>
+    template<typename T, bool Strict, typename std::enable_if< std::is_constructible<T, std::shared_ptr<Context>>::value >::type* = nullptr >
+    void registerClass()
+    {
+        std::cout << "constructing with context: " << typeid(T).name() << std::endl;
+
+        auto instanceTypeIdx = std::type_index(typeid(T));
+        declareBaseTypesDispatch<T>( instanceTypeIdx );
+
+        CtxItem& item = items[ instanceTypeIdx ];
+
+        if (item.factory)
+            throw std::runtime_error(std::string("Factory already registed for type: ") + typeid(T).name());
+
+        item.factory = [this](){ addInstance( std::make_shared<T>(get_m<Context>()) ); };
+        item.singleton = isSingletonScope<T>();
+        std::cout << "Singleton: " << item.singleton << std::endl;
+    }
+
+// TODO: it might be better to check that T::dependencies is a std::tuple instead of simply checking its existance
+    // Case3: T has a dependencies typedef listing its constructor arguments
+    template<typename T, bool Strict, typename std::enable_if< detail::has_dependencies_typedef<T>::value >::type* = nullptr >
+    void registerClass()
+    {
+        constexpr auto size = std::tuple_size<typename T::dependencies>::value;
+        std::cout << "tuple size: " << size << std::endl;
+        registerClassWithDependencies<T, typename T::dependencies>(std::make_index_sequence<size>());
+    }
+
+    // Case4: No known constuction method for T
+    template<typename T, bool Strict, typename std::enable_if< !detail::has_dependencies_typedef<T>::value &&
+                                                               !std::is_constructible<T, std::shared_ptr<Context>>::value &&
+                                                               !std::is_default_constructible<T>::value >::type* = nullptr >
+    void registerClass()
+    {
+        handleUnknownConstruction<T,Strict>();
+    }
+
+    // Case4a: Not strict - runtime error
+    template<typename T, bool Strict, typename std::enable_if< !Strict >::type* = nullptr >
+    void handleUnknownConstruction()
+    {
+        throw std::runtime_error(std::string("Don't know how to instantiate '") + typeid(T).name() + "' or any of its derived types!");
+    }
+
+    // Case4b: Strict - compile time error
+    template<typename T, bool Strict, typename std::enable_if< Strict >::type* = nullptr >
+    void handleUnknownConstruction()
+    {
+        // Use a sizeof to force GCC to display instantiation type in error message
+        static_assert( sizeof(T) == 0, "Don't know how to instantiate type, you cannot explicitly register such type!");
+    }
+
+    // helper method for Case3
+    template<typename T, typename Deps, std::size_t... index>
+    void registerClassWithDependencies(std::index_sequence<index...>)
+    {
+        std::cout << "constructing with dependnecies: " << typeid(T).name() << std::endl;
+
+        auto instanceTypeIdx = std::type_index(typeid(T));
+        declareBaseTypesDispatch<T>( instanceTypeIdx );
+
+        CtxItem& item = items[ instanceTypeIdx ];
+
+        if (item.factory)
+            throw std::runtime_error(std::string("Factory already registed for type: ") + typeid(T).name());
+
+        item.factory = [this](){ addInstance( std::make_shared<T>( get_m< typename std::remove_reference<decltype(std::get<index>(std::declval<Deps>()))>::type >()... ) ); }; //this is wicked!
+        item.singleton = isSingletonScope<T>();
+        std::cout << "Singleton: " << item.singleton << std::endl;
+    }
+
+#if 0
+
+    template <typename Base, typename Deps>
+    void check()
+    {
+        constexpr auto size = std::tuple_size<Deps>::value;
+        std::cout << "tuple size: " << size << std::endl;
+        checkHelper<Base, Deps>(std::make_index_sequence<size>());
+
+    }
+#endif
     // Get an instance from the context, runs factories recursively to satisfy all dependencies
     template <class T>
     std::shared_ptr<T> get_m()
@@ -235,11 +431,14 @@ public:
 
         if (it == items.end())
         {
-            addClassAuto<T>(nullptr);
+            // T is not in typemap, register it!
+            //addClassAuto<T>(nullptr);
+            registerClass<T, false>();  //Strict: false -> failure to register a class (no way to construct it) is not a complie-time error (eg. abstract interface)
             it = items.find( std::type_index(typeid(T)) );
         }
         else
         {
+            // T was found in typemap, check if we need to fallback on Derived tye
             CtxItem& item = it->second;
 
             // fallback to derived type (no instance or factory, but a derived type is registered)
@@ -266,10 +465,22 @@ public:
 #endif
     }
 
+    // pivate!
+    template <typename... Ts>
+    void pass(Ts... /*ts*/) {}
+
+    template <typename... Ts>
+    void inject(std::shared_ptr<Ts>&... ts)
+    {
+        pass( ts = get_m<Ts>()... );
+    }
+
     // explicit specialization for Context is after class
 
+    // Context is not a singleton! Every call to create() will result in a new Context which is destructed right
+    // after the call unless some of the created objects depend on it.
     template <class T>
-    static std::shared_ptr<T> get_s()
+    static std::shared_ptr<T> create()
     {
         struct ConstructibleContext : public Context {};
 
