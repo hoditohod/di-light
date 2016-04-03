@@ -71,7 +71,7 @@ int main(void)
 #endif
 
 #if 1
-    auto b = di::Context::create<B>();
+    auto b = di::Context::create<C2>();
     std::cout << "auto_b created\n";
     b->run();
 #endif
