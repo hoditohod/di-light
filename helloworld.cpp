@@ -17,7 +17,7 @@ public:
     std::shared_ptr<di::Context> ctx;
 
     void run() { std::cout << "World2!\n"; }
-    ~C2() { std::cout << "C destructor\n"; }
+    ~C2() { std::cout << "C2 destructor\n"; }
     using singleton = std::false_type;
 };
 
