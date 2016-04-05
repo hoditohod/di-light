@@ -80,22 +80,32 @@ struct T2_A {
 };
 
 
-#if 0
 
 /************************************/
-/* Test set 3: const ref dependency */
+/* Test set 3: const dependency */
 /************************************/
 struct T3_B {
     std::string run() const { return "B"; }
-    static auto factory() { return new T3_B; }
 };
 
 struct T3_A {
-    const T3_B& b;
-    std::string run() { return "A" + b.run(); }
-    static auto factory(const T3_B& b) { return new T3_A{b}; }
+    T3_A(std::shared_ptr<const T3_B> b) : b(b) {}
+
+    std::shared_ptr<const T3_B> b;
+    std::string run() { return "A" + b->run(); }
+
+    using dependencies = std::tuple<T3_B>;
 };
 
+struct T3_A2 {
+    T3_A2( shared_ptr<di::Context> ctx) { ctx->inject(b); }
+
+    std::shared_ptr<const T3_B> b;
+    std::string run() { return "A" + b->run(); }
+};
+
+
+#if 0
 
 
 /**************************************/
@@ -228,48 +238,40 @@ struct T11 {
 
 
 
-// transitive dependencies automatically detected and injected (without explicit registratin in context)
+// with 'using dependencies'
 int test_transitive1()
 {
+    destructionMark.clear();
     TINYTEST_STR_EQUAL( "ABDC", di::Context::create<T1_A>()->run().c_str() );
+    TINYTEST_STR_EQUAL( "ACBD", destructionMark.c_str() );
     return 1;
 }
 
-#if 0
-
-// destruction order must be the reverese of construnction (must not depend on map key)
-int test_destruction1()
+// with 'inject()'
+int test_transitive2()
 {
     destructionMark.clear();
-    {
-        di::Context ctx;
-        ctx.get<T1_A>().run();
-    }
-    TINYTEST_STR_EQUAL( "ABC", destructionMark.c_str() );
+    TINYTEST_STR_EQUAL( "ABDC", di::Context::create<T2_A>()->run().c_str() );
+    TINYTEST_STR_EQUAL( "ACBD", destructionMark.c_str() );
     return 1;
 }
-
-// destruction order must be the reverese of construnction (must not depend on map key)
-int test_destruction2()
-{
-    destructionMark.clear();
-    {
-        di::Context ctx;
-        ctx.get<T2_C>().run();
-    }
-    TINYTEST_STR_EQUAL( "CBA", destructionMark.c_str() );
-    return 1;
-}
-
 
 // const ref dependencies are supported
-int test_constRef()
+int test_constDep1()
 {
-    di::Context ctx;
-    TINYTEST_STR_EQUAL( "AB", ctx.get<T3_A>().run().c_str() );
+    TINYTEST_STR_EQUAL( "AB", di::Context::create<T3_A>()->run().c_str() );
     return 1;
 }
 
+// const ref dependencies are supported, with inject()
+int test_constDep2()
+{
+    TINYTEST_STR_EQUAL( "AB", di::Context::create<T3_A2>()->run().c_str() );
+    return 1;
+}
+
+
+#if 0
 
 // polymorphic mock class hierarchy - nonmock picked up by default
 int test_poly1()
@@ -401,10 +403,12 @@ int test_dependOnContext()
 
 TINYTEST_START_SUITE(DI_light);
     TINYTEST_ADD_TEST(test_transitive1);
-//    TINYTEST_ADD_TEST(test_destruction1);
-//    TINYTEST_ADD_TEST(test_destruction2);
-//    TINYTEST_ADD_TEST(test_constRef);
-//    TINYTEST_ADD_TEST(test_poly1);
+    TINYTEST_ADD_TEST(test_transitive2);
+
+    TINYTEST_ADD_TEST(test_constDep1);
+    TINYTEST_ADD_TEST(test_constDep2);
+
+    //    TINYTEST_ADD_TEST(test_poly1);
 //    TINYTEST_ADD_TEST(test_poly2);
 //    TINYTEST_ADD_TEST(test_poly3);
 //    TINYTEST_ADD_TEST(test_poly4);

@@ -45,6 +45,7 @@
  * - check for std::tuple in dependencies typedef
  * - get rid of the copied-in C++14 header code
  * - derivedType to be CtxItem* instead of std::type_index?
+ * - don't die if context is explicitly listed as sole dependency
  */
 
 
@@ -370,7 +371,7 @@ public:
     
     // Get an instance from the context, runs factories recursively to satisfy all dependencies
     template <typename T>
-    std::shared_ptr<T> get()
+    std::shared_ptr<T> get()    //return std::shared_ptr<T_noncv> ???
     {
         using T_noncv = typename std::remove_cv<T>::type;
         CtxItem& item = items[ std::type_index(typeid(T_noncv)) ];
