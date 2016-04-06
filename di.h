@@ -51,76 +51,6 @@
 
 namespace di {
 
-
-namespace compat {
-    //
-    // std::index_sequence is C++14, the below block is taken from gcc's <utility> header to provide support on C++11 compilers
-    //
-
-
-    // Stores a tuple of indices.  Used by tuple and pair, and by bind() to
-    // extract the elements in a tuple.
-    template<size_t... _Indexes>
-      struct _Index_tuple
-      {
-        typedef _Index_tuple<_Indexes..., sizeof...(_Indexes)> __next;
-      };
-
-    // Builds an _Index_tuple<0, 1, 2, ..., _Num-1>.
-    template<size_t _Num>
-      struct _Build_index_tuple
-      {
-        typedef typename _Build_index_tuple<_Num - 1>::__type::__next __type;
-      };
-
-    template<>
-      struct _Build_index_tuple<0>
-      {
-        typedef _Index_tuple<> __type;
-      };
-
-
-    /// Class template integer_sequence
-    template<typename _Tp, _Tp... _Idx>
-      struct integer_sequence
-      {
-        typedef _Tp value_type;
-        static constexpr size_t size() { return sizeof...(_Idx); }
-      };
-
-    template<typename _Tp, _Tp _Num,
-             typename _ISeq = typename _Build_index_tuple<_Num>::__type>
-      struct _Make_integer_sequence;
-
-    template<typename _Tp, _Tp _Num,  size_t... _Idx>
-      struct _Make_integer_sequence<_Tp, _Num, _Index_tuple<_Idx...>>
-      {
-        static_assert( _Num >= 0,
-                       "Cannot make integer sequence of negative length" );
-
-        typedef integer_sequence<_Tp, static_cast<_Tp>(_Idx)...> __type;
-      };
-
-    /// Alias template make_integer_sequence
-    template<typename _Tp, _Tp _Num>
-      using make_integer_sequence
-        = typename _Make_integer_sequence<_Tp, _Num>::__type;
-
-    /// Alias template index_sequence
-    template<size_t... _Idx>
-      using index_sequence = integer_sequence<size_t, _Idx...>;
-
-    /// Alias template make_index_sequence
-    template<size_t _Num>
-      using make_index_sequence = make_integer_sequence<size_t, _Num>;
-
-    /// Alias template index_sequence_for
-    template<typename... _Types>
-      using index_sequence_for = make_index_sequence<sizeof...(_Types)>;
-} //endof namespace compat
-
-
-
 namespace detail {
     // A few SFINAE traits to check if various typedefs are present in a class
 
@@ -133,7 +63,6 @@ namespace detail {
         static const bool value = sizeof(test<T>(nullptr)) == sizeof(char);
     };
 
-
     template<typename T>
     class has_dependencies_typedef
     {
@@ -143,7 +72,6 @@ namespace detail {
         static const bool value = sizeof(test<T>(nullptr)) == sizeof(char);
     };
 
-
     template<typename T>
     class has_base_typedef
     {
@@ -152,6 +80,23 @@ namespace detail {
     public:
         static const bool value = sizeof(test<T>(nullptr)) == sizeof(char);
     };
+
+
+
+    // Index sequence used for tuple type extraction
+    template <std::size_t...Is> struct index_sequence {};
+
+    template <std::size_t N, std::size_t...Is>
+    struct build : public build<N - 1, N - 1, Is...> {};
+
+    template <std::size_t...Is>
+    struct build<0, Is...> {
+        using type = index_sequence<Is...>;
+    };
+
+    template <std::size_t N>
+    using make_index_sequence = typename build<N>::type;
+
 } //endof namespace detail
 
 
@@ -166,18 +111,18 @@ class Context : public std::enable_shared_from_this<Context>
 #ifdef INPLACE
         std::aligned_storage<sizeof(weak_ptr_t), alignof(weak_ptr_t)>::type storage;
 #else
-        void* ptr = nullptr;
+        void* ptr{nullptr};
 #endif
 
-        bool marker = false;                                            // flag used to detect circular dependencies
-        bool singleton = false;
+        bool cyclicMarker{false};                                            // flag used to detect circular dependencies
+        bool singleton{false};
         std::function<void(void*)> factory;                              // factory fn. to create a new object instance
-        void (*deleter)(void*) = nullptr;                               // delete fn. (calls proper destructor)
-        std::type_index derivedType = std::type_index(typeid(void));    // a derived type (eg. implementation of an interface)
+        void (*deleter)(void*){nullptr};                               // delete fn. (calls proper destructor)
+        std::type_index derivedType{std::type_index(typeid(void))};    // a derived type (eg. implementation of an interface)
 
         void dump() const
         {
-            std::cout << std::boolalpha << "mark: " << marker << ", factory: " << (bool)factory << ", del: " << deleter << ", desc: " << derivedType.name() << std::endl;
+            std::cout << std::boolalpha << "mark: " << cyclicMarker << ", factory: " << (bool)factory << ", del: " << deleter << ", desc: " << derivedType.name() << std::endl;
         }
 
         // non-copyable, non-moveable
@@ -265,6 +210,9 @@ class Context : public std::enable_shared_from_this<Context>
     template<typename T, typename std::enable_if< detail::has_singleton_typedef<T>::value >::type* = nullptr >
     constexpr bool isSingletonScope()
     {
+        static_assert( std::is_same<typename T::singleton, std::true_type>::value || std::is_same<typename T::singleton, std::false_type>::value,
+                       "The singleton type alias must either refer to std::true_type or std::false_type!");
+
         return T::singleton::value;
     }
 
@@ -292,7 +240,8 @@ class Context : public std::enable_shared_from_this<Context>
 
 
     // Case1: T is default constructible
-    template<typename T, bool Strict, typename std::enable_if< std::is_default_constructible<T>::value && !detail::has_dependencies_typedef<T>::value >::type* = nullptr >
+    template<typename T, bool Strict, typename std::enable_if< std::is_default_constructible<T>::value &&
+                                                               !detail::has_dependencies_typedef<T>::value >::type* = nullptr >
     void createFactory(CtxItem& item)
     {
         //std::cout << "Default constructing: " << typeid(T).name() << std::endl;
@@ -303,7 +252,8 @@ class Context : public std::enable_shared_from_this<Context>
     }
 
     // Case2: T is constructible with std::shared_ptr<Context>
-    template<typename T, bool Strict, typename std::enable_if< std::is_constructible<T, std::shared_ptr<Context>>::value >::type* = nullptr >
+    template<typename T, bool Strict, typename std::enable_if< std::is_constructible<T, std::shared_ptr<Context>>::value &&
+                                                               !detail::has_dependencies_typedef<T>::value >::type* = nullptr >
     void createFactory(CtxItem& item)
     {
         //std::cout << "constructing with context: " << typeid(T).name() << std::endl;
@@ -320,7 +270,7 @@ class Context : public std::enable_shared_from_this<Context>
     void createFactory(CtxItem& item)
     {
         constexpr auto size = std::tuple_size<typename T::dependencies>::value;
-        createFactoryWithDependencies<T, typename T::dependencies>(item, compat::make_index_sequence<size>());
+        createFactoryWithDependencies<T, typename T::dependencies>(item, detail::make_index_sequence<size>());
     }
 
 
@@ -336,7 +286,7 @@ class Context : public std::enable_shared_from_this<Context>
 
     // helper method for Case3
     template<typename T, typename Deps, std::size_t... index>
-    void createFactoryWithDependencies(CtxItem& item, compat::index_sequence<index...>)
+    void createFactoryWithDependencies(CtxItem& item, detail::index_sequence<index...>)
     {
         //std::cout << "constructing with dependnecies: " << typeid(T).name() << std::endl;
         item.factory = [this](void* sh_ptr){
@@ -345,11 +295,6 @@ class Context : public std::enable_shared_from_this<Context>
         };
         item.singleton = isSingletonScope<T>();
     }
-
-    // pivate!
-    template <typename... Ts>
-    void pass(Ts... ) {}
-
 
 public:
 
@@ -376,8 +321,8 @@ public:
         using T_noncv = typename std::remove_cv<T>::type;
         CtxItem& item = items[ std::type_index(typeid(T_noncv)) ];
 
+        // add a factory
         if (item.isUnknownType())
-            // add a factory
             registerClass<T_noncv, false>();  //Strict: false -> failure to register a class (no way to construct it) is not a complie-time error (eg. abstract interface)
 
         CtxItem& effectiveItem = item.useDerivedType() ? items[ item.derivedType ] : item;
@@ -397,15 +342,15 @@ public:
         }
 
         // create an instance
-       if (effectiveItem.marker)
+       if (effectiveItem.cyclicMarker)
            throw std::runtime_error(std::string("Cyclic dependecy while instantiating type: ") + typeid(T).name());
 
        std::shared_ptr<T_noncv> sharedPtr;
        std::cout << "caller type: " << typeid(T_noncv).name() << std::endl;
 
-       effectiveItem.marker = true;
+       effectiveItem.cyclicMarker = true;
        effectiveItem.factory(&sharedPtr);
-       effectiveItem.marker = false;
+       effectiveItem.cyclicMarker = false;
 
        if ( !effectiveItem.singleton )
            return sharedPtr;
@@ -426,18 +371,18 @@ public:
 #endif
        return sharedPtr;
     }
+    // explicit specialization of get<Context> is after class
+
 
     template <typename... Ts>
     void inject(std::shared_ptr<Ts>&... ts)
     {
-        pass( ts = get<Ts>()... );
+        [](...){}( (bool)(ts = get<Ts>())... ); //nice...
     }
-
-    // explicit specialization of get<Context> is after class
 
     // Context is not a singleton! Every call to create() will result in a new Context which is destructed right
     // after the call unless some of the created objects depend on it.
-    template <class T>
+    template <typename T>
     static std::shared_ptr<T> create()
     {
         struct ConstructibleContext : public Context {};
@@ -449,23 +394,8 @@ public:
 
 #if 0
 
-    // Variadic template to add a list of free standing factory functions
-    template <typename T1, typename T2, typename... Ts>
-    void addFactory(T1 t1, T2 t2, Ts... ts)
-    {
-        addFactoryPriv(t1);
-        addFactory(t2, ts...);
-    }
 
-    template <typename T>
-    void addFactory(T t)
-    {
-        addFactoryPriv(t);
-    }
-
-
-
-    // Variadic template to add a list of classes with factory methods
+    // Variadic template to register a list of classes
     template <typename InstanceType1, typename InstanceType2, typename... ITs>
     void addClass()
     {

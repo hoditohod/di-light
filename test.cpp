@@ -5,7 +5,6 @@
 #include "di.h"
 
 using std::shared_ptr;
-using std::make_shared;
 
 std::string destructionMark;
 
@@ -81,17 +80,17 @@ struct T2_A {
 
 
 
-/************************************/
+/********************************/
 /* Test set 3: const dependency */
-/************************************/
+/********************************/
 struct T3_B {
     std::string run() const { return "B"; }
 };
 
 struct T3_A {
-    T3_A(std::shared_ptr<const T3_B> b) : b(b) {}
+    T3_A(shared_ptr<const T3_B> b) : b(b) {}
 
-    std::shared_ptr<const T3_B> b;
+    shared_ptr<const T3_B> b;
     std::string run() { return "A" + b->run(); }
 
     using dependencies = std::tuple<T3_B>;
@@ -100,12 +99,11 @@ struct T3_A {
 struct T3_A2 {
     T3_A2( shared_ptr<di::Context> ctx) { ctx->inject(b); }
 
-    std::shared_ptr<const T3_B> b;
+    shared_ptr<const T3_B> b;
     std::string run() { return "A" + b->run(); }
 };
 
 
-#if 0
 
 
 /**************************************/
@@ -114,7 +112,6 @@ struct T3_A2 {
 struct T4_B {
     virtual ~T4_B() = default;
     virtual std::string run() { return "B"; }
-    static auto factory() { return new T4_B; }
 };
 
 struct T4_B_mock : public T4_B{
@@ -122,15 +119,19 @@ struct T4_B_mock : public T4_B{
     typedef T4_B base;
 #endif
     std::string run() override { return "Bmock"; }
-    static auto factory() { return new T4_B_mock; }
 };
 
 struct T4_A {
-    T4_B& b;
-    std::string run() { return "A" + b.run(); }
-    static auto factory(T4_B& b) { return new T4_A{b}; }
+    T4_A( shared_ptr<T4_B> b) : b(b) {}
+
+    shared_ptr<T4_B> b;
+
+    std::string run() { return "A" + b->run(); }
+
+    using dependencies = std::tuple<T4_B>;
 };
 
+#if 0
 
 
 /*************************************/
@@ -157,7 +158,7 @@ struct T5_dd : public T5_d {
     static auto factory() { return new T5_dd; }
 };
 
-
+/* abstract base class */
 
 /********************************************/
 /* Test set 6: class without factory method */
@@ -271,16 +272,15 @@ int test_constDep2()
 }
 
 
-#if 0
 
 // polymorphic mock class hierarchy - nonmock picked up by default
 int test_poly1()
 {
-    di::Context ctx;
-    TINYTEST_STR_EQUAL( "AB", ctx.get<T4_A>().run().c_str() );
+    TINYTEST_STR_EQUAL( "AB", di::Context::create<T4_A>()->run().c_str() );
     return 1;
 }
 
+#if 0
 
 // polymorphic mock class - mock can be injected
 int test_poly2()
@@ -408,7 +408,7 @@ TINYTEST_START_SUITE(DI_light);
     TINYTEST_ADD_TEST(test_constDep1);
     TINYTEST_ADD_TEST(test_constDep2);
 
-    //    TINYTEST_ADD_TEST(test_poly1);
+    TINYTEST_ADD_TEST(test_poly1);
 //    TINYTEST_ADD_TEST(test_poly2);
 //    TINYTEST_ADD_TEST(test_poly3);
 //    TINYTEST_ADD_TEST(test_poly4);
