@@ -125,11 +125,18 @@ struct T4_A {
     T4_A( shared_ptr<T4_B> b) : b(b) {}
 
     shared_ptr<T4_B> b;
-
     std::string run() { return "A" + b->run(); }
 
     using dependencies = std::tuple<T4_B>;
 };
+
+struct T4_A2 {
+    T4_A2(shared_ptr<di::Context> ctx) { ctx->inject(b); }
+
+    shared_ptr<T4_B> b;
+    std::string run() { return "A" + b->run(); }
+};
+
 
 #if 0
 
@@ -280,16 +287,23 @@ int test_poly1()
     return 1;
 }
 
-#if 0
 
 // polymorphic mock class - mock can be injected
 int test_poly2()
 {
-    di::ContextTmpl<T4_B_mock> ctx; //prefer derived mock over base
-    TINYTEST_STR_EQUAL( "ABmock", ctx.get<T4_A>().run().c_str() );
+    TINYTEST_STR_EQUAL( "ABmock", di::ContextReg<T4_B_mock>::create<T4_A>()->run().c_str() );
     return 1;
 }
 
+// polymorphic mock class - mock can be injected
+int test_poly2i()
+{
+    TINYTEST_STR_EQUAL( "ABmock", di::ContextReg<T4_B_mock>::create<T4_A2>()->run().c_str() );
+    return 1;
+}
+
+
+#if 0
 
 // polymorphic classes - both base and derived reference type can be requested, both are the same instance
 int test_poly3()
@@ -409,7 +423,9 @@ TINYTEST_START_SUITE(DI_light);
     TINYTEST_ADD_TEST(test_constDep2);
 
     TINYTEST_ADD_TEST(test_poly1);
-//    TINYTEST_ADD_TEST(test_poly2);
+    TINYTEST_ADD_TEST(test_poly2);
+    TINYTEST_ADD_TEST(test_poly2i);
+
 //    TINYTEST_ADD_TEST(test_poly3);
 //    TINYTEST_ADD_TEST(test_poly4);
 //    TINYTEST_ADD_TEST(test_factory1);

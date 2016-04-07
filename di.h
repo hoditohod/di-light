@@ -114,11 +114,11 @@ class Context : public std::enable_shared_from_this<Context>
         void* ptr{nullptr};
 #endif
 
-        bool cyclicMarker{false};                                            // flag used to detect circular dependencies
-        bool singleton{false};
-        std::function<void(void*)> factory;                              // factory fn. to create a new object instance
-        void (*deleter)(void*){nullptr};                               // delete fn. (calls proper destructor)
-        std::type_index derivedType{std::type_index(typeid(void))};    // a derived type (eg. implementation of an interface)
+        bool cyclicMarker{false};                                       // flag used to detect circular dependencies
+        bool singleton{false};                                          // flag for object scope
+        std::function<void(void*)> factory;                             // factory fn. to create a new object instance
+        void (*deleter)(void*){nullptr};                                // delete fn. (calls proper destructor)
+        std::type_index derivedType{std::type_index(typeid(void))};     // a derived type (eg. implementation of an interface)
 
         void dump() const
         {
@@ -200,7 +200,7 @@ class Context : public std::enable_shared_from_this<Context>
 #endif
     }
 
-
+public:
     Context()
     {
         std::cout << "context constructor\n";
@@ -210,6 +210,7 @@ class Context : public std::enable_shared_from_this<Context>
     template<typename T, typename std::enable_if< detail::has_singleton_typedef<T>::value >::type* = nullptr >
     constexpr bool isSingletonScope()
     {
+        // below assert is not very effective... too many error messages by the compiler
         static_assert( std::is_same<typename T::singleton, std::true_type>::value || std::is_same<typename T::singleton, std::false_type>::value,
                        "The singleton type alias must either refer to std::true_type or std::false_type!");
 
@@ -223,7 +224,7 @@ class Context : public std::enable_shared_from_this<Context>
     }
 
     template<typename T, bool Strict>
-    inline void registerClass()
+    inline void registerClass_priv()
     {
         auto instanceTypeIdx = std::type_index(typeid(T));
         declareBaseTypesDispatch<T>( instanceTypeIdx );
@@ -323,7 +324,7 @@ public:
 
         // add a factory
         if (item.isUnknownType())
-            registerClass<T_noncv, false>();  //Strict: false -> failure to register a class (no way to construct it) is not a complie-time error (eg. abstract interface)
+            registerClass_priv<T_noncv, false>();  //Strict: false -> failure to register a class (no way to construct it) is not a complie-time error (eg. abstract interface)
 
         CtxItem& effectiveItem = item.useDerivedType() ? items[ item.derivedType ] : item;
 
@@ -365,7 +366,7 @@ public:
 #else
        effectiveItem.ptr = new std::weak_ptr<T>(std::forward(sharedPtr);
        effectiveItem.deleter = [](void* ptr) {
-           std::cout << "deleter " << typeid(T_noncv).name() << std::endl;
+           //std::cout << "deleter " << typeid(T_noncv).name() << std::endl;
            delete static_cast< std::weak_ptr<T_noncv>* >(ptr);
        };
 #endif
@@ -377,6 +378,7 @@ public:
     template <typename... Ts>
     void inject(std::shared_ptr<Ts>&... ts)
     {
+        // use empty vararg lambda to provide arglist for parameter pack expansion
         [](...){}( (bool)(ts = get<Ts>())... ); //nice...
     }
 
@@ -385,30 +387,23 @@ public:
     template <typename T>
     static std::shared_ptr<T> create()
     {
-        struct ConstructibleContext : public Context {};
-
-        auto ctx = std::make_shared<ConstructibleContext>();
+        auto ctx = std::make_shared<Context>();
         return ctx->get<T>();
     }
 
-
-#if 0
-
-
     // Variadic template to register a list of classes
-    template <typename InstanceType1, typename InstanceType2, typename... ITs>
-    void addClass()
+    template <typename T1, typename T2, typename... Ts>
+    void registerClass()
     {
-        addFactoryPriv(InstanceType1::factory);
-        addClass<InstanceType2, ITs...>();
+        registerClass_priv<typename std::remove_cv<T1>::type, true>();
+        registerClass<T2, Ts...>();
     }
 
-    template <typename InstanceTypeLast>
-    void addClass()
+    template <typename T>
+    void registerClass()
     {
-        addFactoryPriv(InstanceTypeLast::factory);
+        registerClass_priv<typename std::remove_cv<T>::type, true>();
     }
-#endif
 };
 
 // specialization for Context::get<Context>()
@@ -419,38 +414,22 @@ std::shared_ptr<Context> Context::get()
     return shared_from_this();
 }
 
-#if 0
-// Convenience class to add classes and free standing factories in a single construtor call
+
+// Convenience class to register classes in a single call
 template<typename... Ts>
-class ContextTmpl : public Context
+class ContextReg
 {
 public:
-    template<typename... T2s>
-    ContextTmpl(T2s... t2s)
+    template <typename T>
+    static std::shared_ptr<T> create()
     {
-        addClass<Ts...>();
-        addFactory(t2s...);
-    }
+        auto ctx = std::make_shared<Context>();
 
-    ContextTmpl()
-    {
-           addClass<Ts...>();
+        ctx->registerClass<Ts...>();
+        return ctx->get<T>();
     }
 };
 
-template<>
-class ContextTmpl<> : public Context
-{
-public:
-    template<typename... T2s>
-    ContextTmpl(T2s... t2s)
-    {
-        addFactory(t2s...);
-    }
-
-    ContextTmpl() = default;
-};
-#endif
 
 } //end of namespace di
 
