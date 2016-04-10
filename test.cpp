@@ -5,10 +5,6 @@
 #include "di.h"
 
 
-/* TODO:
- * - default consturctible class with dependencies typedef
- * - class dependening on Context with dependnecies typedef
- */
 
 
 using std::shared_ptr;
@@ -230,9 +226,50 @@ struct T8_C_d : public T8_C {   // derived class inherits base scope
 };
 
 
+/*********************************************/
+/* Test set 9: unneccesary deps declarations */
+/*********************************************/
+
+struct T9_A{
+    using dependencies = std::tuple<>;
+};
+
+struct T9_B{
+    T9_B(shared_ptr<di::Context>) {}
+
+    using dependencies = std::tuple<di::Context>;
+};
+
+
+/*****************************************/
+/* Test set 10: depending on di::Context */
+/*****************************************/
+
+struct T10 {
+    T10( shared_ptr<di::Context> ctx) : ctx(ctx) {}
+    ~T10() { destructionMark += "T10"; }
+
+    shared_ptr<di::Context> ctx;
+};
 
 
 
+
+
+/*************************************************/
+/* Test set Z: classes that cause static asserts */
+/*************************************************/
+
+struct Z1 {
+    using singleton = int; //int is not a valid type for singleton
+};
+
+struct Z2 {
+    Z2(int) {} //no known construction, can't be registered
+};
+
+//auto z1 = di::Context::create<Z1>();
+//auto z2 = di::ContextReg<Z2>::create<Z2>();
 
 
 
@@ -386,6 +423,24 @@ int test_scope5()
     return 1;
 }
 
+// unnecessary deps declaration doesn't cause build error
+int test_unnecessary1()
+{
+    di::Context::create<T9_A>();
+    di::Context::create<T9_B>();
+    return 1;
+}
+
+// depending on the Context doesn't end up as a circular dependency, and objects are destructed correctly
+int test_dependOnContext()
+{
+    destructionMark.clear();
+    di::Context::create<T10>();
+    TINYTEST_STR_EQUAL( "T10", destructionMark.c_str() );
+    return 1;
+}
+
+
 
 TINYTEST_START_SUITE(DI_light);
     TINYTEST_ADD_TEST(test_transitive1);
@@ -408,6 +463,11 @@ TINYTEST_START_SUITE(DI_light);
     TINYTEST_ADD_TEST(test_scope3);
     TINYTEST_ADD_TEST(test_scope4);
     TINYTEST_ADD_TEST(test_scope5);
+
+    TINYTEST_ADD_TEST(test_unnecessary1);
+
+    TINYTEST_ADD_TEST(test_dependOnContext);
+
 
 TINYTEST_END_SUITE();
 
