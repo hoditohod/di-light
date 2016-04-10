@@ -1,98 +1,65 @@
 #include <iostream>
 #include "di.h"
 
-//Three classes with dependencies: A->B->C
-class C {
-public:
-    void run() { std::cout << "World!\n"; }
-    //static auto prototypeFactory() { return std::make_shared<C>(); }
-    ~C() { std::cout << "C destructor\n"; }
-    using singleton = std::false_type;
-};
+/*************************************************************************/
+/* Set1: A depends on B&C, B depends on C (no dependency on the library) */
+/*************************************************************************/
+struct C { };
 
-class C2 {
-public:
-    C2(std::shared_ptr<di::Context> ctx) : ctx(ctx) {}
+struct B {
+    B( std::shared_ptr<C> c) : c(c) {}
 
-    std::shared_ptr<di::Context> ctx;
-
-    void run() { std::cout << "World2!\n"; }
-    ~C2() { std::cout << "C2 destructor\n"; }
-    using singleton = std::false_type;
-};
-
-
-
-class B {
-public:
-    B(std::shared_ptr<C> c) : c(c) {}
     std::shared_ptr<C> c;
-    void run() { std::cout << "DI "; c->run(); }
-    //static auto singletonFactory(std::shared_ptr<C> c, std::shared_ptr<di::Context>) { return std::make_shared<B>(c); }
-    ~B() { std::cout << "B destructor\n"; }
 
     using dependencies = std::tuple<C>;
-    using singleton = std::false_type;
 };
 
-/*
-class A {
-public:
-    B& b;
-    void run() { std::cout << "Hello "; b.run(); }
-    static auto factory(B& b) { return new A{b}; }
-};
-*/
+struct A {
+    A( std::shared_ptr<B> b, std::shared_ptr<C> c) : b(b), c(c) {}
 
+    std::shared_ptr<B> b;
+    std::shared_ptr<C> c;
 
+    void hello() { std::cout << "Hello Set1!\n"; }
 
-struct AA
-{
-    AA(int) {}
-    using bela = int;
+    using dependencies = std::tuple<B, C>;
 };
 
-struct BB : public AA
-{
-    using bela = char;
+
+/************************************************************************/
+/* Set2: A depends on B&C, B depends on C (+ dependency on di::Context) */
+/************************************************************************/
+struct C2 { };
+
+struct B2 {
+    B2( std::shared_ptr<di::Context> ctx) { ctx->inject(c); }
+
+    std::shared_ptr<C2> c;
 };
+
+struct A2 {
+    A2( std::shared_ptr<di::Context> ctx) { ctx->inject(b,c); }
+
+    std::shared_ptr<B2> b;
+    std::shared_ptr<C2> c;
+
+    void hello() { std::cout << "Hello Set2!\n"; }
+};
+
+
 
 int main(void)
 {
-    std::cout << "Sizeof: " << sizeof( std::shared_ptr<void> ) <<std::endl;
+    // Instantiation without di-light (Set1 only):
+    auto c = std::make_shared<C>();
+    auto b = std::make_shared<B>(c);
+    auto a = std::make_shared<A>(b, c);
+    a->hello();
 
-#if 0
-    {
-        di::Context ctx;
-        ctx.get<B>()->run(); //prints: Hello DI World!
-        std::cout << "end of scope!\n";
-    }
-    std::cout << "out of scope\n";
-#endif
+    // Set1 with di-light:
+    di::Context::create<A>()->hello();
 
-#if 1
-    auto b = di::Context::create<C2>();
-    std::cout << "auto_b created\n";
-    b->run();
-#endif
-
-#if 0
-
-    auto ctx = di::Context::create<di::Context>();
-    //auto c = ctx->get_m<C>();
-    //c->run();
-
-    //auto c2 = ctx->get_m<C2>();
-    //c2->run();
-
-    auto tmp = ctx->get_m<B>();
-#endif
-
-
-#if 0
-    auto b = B::factory(C::factory());
-    b->run();
-#endif
-
+    // Set2 with di-light:
+    di::Context::create<A2>()->hello();
 }
 

@@ -40,12 +40,19 @@
 
 #define INPLACE
 
+//#define LOG std::cout
+#define LOG if (false) std::cout
+
+
 /* TODO:
  * - check base type with enable_if in declareBaseTypes
  * - check for std::tuple in dependencies typedef
  * - get rid of the copied-in C++14 header code
  * - derivedType to be CtxItem* instead of std::type_index?
  * - don't die if context is explicitly listed as sole dependency
+ * - move CtxItem to detail scope!
+ * - use cxa demangle on type names
+ * - improve log messages
  */
 
 
@@ -122,7 +129,7 @@ class Context : public std::enable_shared_from_this<Context>
 
         void dump() const
         {
-            std::cout << std::boolalpha << "mark: " << cyclicMarker << ", factory: " << (bool)factory << ", del: " << deleter << ", desc: " << derivedType.name() << std::endl;
+            LOG << std::boolalpha << "mark: " << cyclicMarker << ", factory: " << (bool)factory << ", del: " << deleter << ", desc: " << derivedType.name() << std::endl;
         }
 
         // non-copyable, non-moveable
@@ -200,12 +207,6 @@ class Context : public std::enable_shared_from_this<Context>
 #endif
     }
 
-public:
-    Context()
-    {
-        std::cout << "context constructor\n";
-    }
-
 
     template<typename T, typename std::enable_if< detail::has_singleton_typedef<T>::value >::type* = nullptr >
     constexpr bool isSingletonScope()
@@ -226,6 +227,8 @@ public:
     template<typename T, bool Strict>
     inline void registerClass_priv()
     {
+        LOG << "Context::registerClass_priv() type: " << typeid(T).name() << std::endl;
+
         auto instanceTypeIdx = std::type_index(typeid(T));
         declareBaseTypesDispatch<T>( instanceTypeIdx );
 
@@ -245,10 +248,9 @@ public:
                                                                !detail::has_dependencies_typedef<T>::value >::type* = nullptr >
     void createFactory(CtxItem& item)
     {
-        //std::cout << "Default constructing: " << typeid(T).name() << std::endl;
         item.factory = [this](void* sh_ptr){
             *(static_cast<std::shared_ptr<T>*>(sh_ptr)) = std::make_shared<T>();
-            std::cout << "factory type: " << typeid(T).name() << std::endl;
+            LOG << "Context::createFactory() type: " << typeid(T).name() << std::endl;
         };
     }
 
@@ -257,10 +259,9 @@ public:
                                                                !detail::has_dependencies_typedef<T>::value >::type* = nullptr >
     void createFactory(CtxItem& item)
     {
-        //std::cout << "constructing with context: " << typeid(T).name() << std::endl;
         item.factory = [this](void* sh_ptr){
             *(static_cast<std::shared_ptr<T>*>(sh_ptr)) = std::make_shared<T>(get<Context>());
-            std::cout << "factory type: " << typeid(T).name() << std::endl;
+            LOG << "Context::createFactory() type: " << typeid(T).name() << std::endl;
         };
     }
 
@@ -289,27 +290,32 @@ public:
     template<typename T, typename Deps, std::size_t... index>
     void createFactoryWithDependencies(CtxItem& item, detail::index_sequence<index...>)
     {
-        //std::cout << "constructing with dependnecies: " << typeid(T).name() << std::endl;
         item.factory = [this](void* sh_ptr){
             *(static_cast<std::shared_ptr<T>*>(sh_ptr)) = std::make_shared<T>( get< typename std::remove_reference<decltype(std::get<index>(std::declval<Deps>()))>::type >()... );
-            std::cout << "factory type: " << typeid(T).name() << std::endl;
+            LOG << "Context::createFactory() type: " << typeid(T).name() << std::endl;
         };
         item.singleton = isSingletonScope<T>();
     }
+
+protected:
+
+    // All Context instances must be managed by a std::shared_ptr. Don't instantiate directly with new()!
+    Context() = default;
+
 
 public:
 
     ~Context()
     {
-        std::cout << "context destructor\n";
+        LOG << "Context::~Context()\n";
     }
 
     void dump(const std::string& msg)
     {
-        std::cout << msg << std::endl;
+        LOG << msg << std::endl;
         for (auto it = items.cbegin(); it != items.cend(); it++)
         {
-            std::cout << it->first.name() << " - ";
+            LOG << it->first.name() << " - ";
             it->second.dump();
         }
     }
@@ -317,9 +323,11 @@ public:
     
     // Get an instance from the context, runs factories recursively to satisfy all dependencies
     template <typename T>
-    std::shared_ptr<T> get()    //return std::shared_ptr<T_noncv> ???
+    std::shared_ptr<T> get()
     {
         using T_noncv = typename std::remove_cv<T>::type;
+        LOG << "Context::get() type: " << typeid(T).name() << std::endl;
+
         CtxItem& item = items[ std::type_index(typeid(T_noncv)) ];
 
         // add a factory
@@ -347,7 +355,6 @@ public:
            throw std::runtime_error(std::string("Cyclic dependecy while instantiating type: ") + typeid(T).name());
 
        std::shared_ptr<T_noncv> sharedPtr;
-       std::cout << "caller type: " << typeid(T_noncv).name() << std::endl;
 
        effectiveItem.cyclicMarker = true;
        effectiveItem.factory(&sharedPtr);
@@ -360,13 +367,11 @@ public:
        // placement new, explicit destruction
        new(&effectiveItem.storage) std::weak_ptr<T_noncv>(sharedPtr);
        effectiveItem.deleter = [](void* ptr) {
-           //std::cout << "deleter " << typeid(T_noncv).name() << std::endl;
            static_cast< std::weak_ptr<T_noncv>* >(ptr) -> ~weak_ptr();
        };
 #else
-       effectiveItem.ptr = new std::weak_ptr<T>(std::forward(sharedPtr);
+       effectiveItem.ptr = new std::weak_ptr<T_noncv>(std::forward(sharedPtr);
        effectiveItem.deleter = [](void* ptr) {
-           //std::cout << "deleter " << typeid(T_noncv).name() << std::endl;
            delete static_cast< std::weak_ptr<T_noncv>* >(ptr);
        };
 #endif
@@ -387,7 +392,10 @@ public:
     template <typename T>
     static std::shared_ptr<T> create()
     {
-        auto ctx = std::make_shared<Context>();
+        LOG << "Context::create()\n";
+
+        struct Constructible : public Context {};
+        auto ctx = std::make_shared<Constructible>();
         return ctx->get<T>();
     }
 
@@ -410,20 +418,25 @@ public:
 template<>
 std::shared_ptr<Context> Context::get()
 {
-    std::cout << "get Context\n";
+    LOG << "Context::get<Context>()\n";
     return shared_from_this();
 }
 
 
 // Convenience class to register classes in a single call
 template<typename... Ts>
-class ContextReg
+class ContextReg : public Context
 {
 public:
+
+    // ContextReg is not a singleton! Every call to create() will result in a new Context which is destructed right
+    // after the call unless some of the created objects depend on it.
     template <typename T>
     static std::shared_ptr<T> create()
     {
-        auto ctx = std::make_shared<Context>();
+        LOG << "ContextReg::create()\n";
+        struct Constructible : public Context {};
+        auto ctx = std::make_shared<Constructible>();
 
         ctx->registerClass<Ts...>();
         return ctx->get<T>();

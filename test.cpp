@@ -4,6 +4,13 @@
 //#define HAS_TR2
 #include "di.h"
 
+
+/* TODO:
+ * - default consturctible class with dependencies typedef
+ * - class dependening on Context with dependnecies typedef
+ */
+
+
 using std::shared_ptr;
 
 std::string destructionMark;
@@ -138,7 +145,6 @@ struct T4_A2 {
 };
 
 
-#if 0
 
 
 /*************************************/
@@ -146,98 +152,82 @@ struct T4_A2 {
 /*************************************/
 struct T5 {
     virtual ~T5() { destructionMark += "T5"; }
-    static auto factory() { return new T5; }
 };
 
 struct T5_d : public T5{
 #ifndef HAS_TR2
-    typedef T5 base;
+    using base = T5;
 #endif
     virtual ~T5_d() { destructionMark += "T5_d"; }
-    static auto factory() { return new T5_d; }
 };
 
 struct T5_dd : public T5_d {
 #ifndef HAS_TR2
-    typedef T5_d base;
+    using base = T5_d;
 #endif
     virtual ~T5_dd() { destructionMark += "T5_dd"; }
-    static auto factory() { return new T5_dd; }
 };
 
-/* abstract base class */
 
-/********************************************/
-/* Test set 6: class without factory method */
-/********************************************/
+
+/***********************************/
+/* Test set 6: abstract base class */
+/***********************************/
+
 struct T6 {
-    std::string run() { return "A"; }
-};
-
-auto T6_factory() { return new T6; }
-
-
-
-/****************************************************************************/
-/* Test set 7: class without factory method, but other member named factory */
-/****************************************************************************/
-struct T7 {
-    std::string run() { return "A"; }
-    int factory;    // must not cause compile error
-};
-
-auto T7_factory() { return new T7; }
-
-
-
-/***************************************/
-/* Test set 8: factory returns nullptr */
-/***************************************/
-struct T8 {
-    static T8* factory() { return nullptr; }
+    virtual std::string run() = 0;
 };
 
 
-
-/****************************************************/
-/* Test set 9: multiple factories for the same type */
-/****************************************************/
-struct T9_A {
-    static T9_A* factory() { return new T9_A; }
-};
-
-struct T9_B {
-    static T9_A* factory() { return new T9_A; }
-};
-
-
-
-/**********************************/
-/* Test set 10: cyclic dependency */
-/**********************************/
-struct T10_B;
-
-struct T10_A {
-    T10_B& b;
-    static auto factory(T10_B& b) { return new T10_A{b}; }
-};
-
-struct T10_B {
-    T10_A& a;
-    static auto factory(T10_A& a) { return new T10_B{a}; }
-};
-
-
-
-/*****************************************/
-/* Test set 11: class depends on Context */
-/*****************************************/
-struct T11 {
-    di::Context& ctx;
-    std::string run() { return "A"; }
-    static auto factory(di::Context& ctx) { return new T11{ctx}; }
-};
+struct T6_d : public T6{
+#ifndef HAS_TR2
+    using base = T6;
 #endif
+    std::string run() override { return "A"; }
+};
+
+
+/**********************************/
+/* Test set 7: cyclic dependency */
+/**********************************/
+struct T7_B;
+
+struct T7_A {
+    T7_A(shared_ptr<T7_B> b) : b(b) {}
+    shared_ptr<T7_B> b;
+    using dependencies = std::tuple<T7_B>;
+};
+
+struct T7_B {
+    T7_B(shared_ptr<T7_A> a) : a(a) {}
+    shared_ptr<T7_A> a;
+    using dependencies = std::tuple<T7_A>;
+};
+
+
+
+/**********************************/
+/* Test set 8: scope declarations */
+/**********************************/
+
+struct T8_A {
+    // implicitly singleton
+};
+
+struct T8_B {
+    using singleton = std::true_type;
+};
+
+struct T8_B_d : public T8_B { // derived class with can override scope
+    using singleton = std::false_type;
+};
+
+struct T8_C {
+    using singleton = std::false_type;
+};
+
+struct T8_C_d : public T8_C {   // derived class inherits base scope
+};
 
 
 
@@ -256,7 +246,7 @@ int test_transitive1()
 }
 
 // with 'inject()'
-int test_transitive2()
+int test_transitive1i()
 {
     destructionMark.clear();
     TINYTEST_STR_EQUAL( "ABDC", di::Context::create<T2_A>()->run().c_str() );
@@ -272,13 +262,11 @@ int test_constDep1()
 }
 
 // const ref dependencies are supported, with inject()
-int test_constDep2()
+int test_constDep1i()
 {
     TINYTEST_STR_EQUAL( "AB", di::Context::create<T3_A2>()->run().c_str() );
     return 1;
 }
-
-
 
 // polymorphic mock class hierarchy - nonmock picked up by default
 int test_poly1()
@@ -287,7 +275,6 @@ int test_poly1()
     return 1;
 }
 
-
 // polymorphic mock class - mock can be injected
 int test_poly2()
 {
@@ -295,7 +282,7 @@ int test_poly2()
     return 1;
 }
 
-// polymorphic mock class - mock can be injected
+// polymorphic mock class - mock can be injected (using inject)
 int test_poly2i()
 {
     TINYTEST_STR_EQUAL( "ABmock", di::ContextReg<T4_B_mock>::create<T4_A2>()->run().c_str() );
@@ -303,16 +290,15 @@ int test_poly2i()
 }
 
 
-#if 0
 
-// polymorphic classes - both base and derived reference type can be requested, both are the same instance
+// polymorphic classes - both base and derived reference type can be requested, both are the same instance (singleton scope)
 int test_poly3()
 {
-    di::ContextTmpl<T5_dd> ctx;   //all base types are in context, but only 1 derived instance
-    T5&    a = ctx.get<T5>();
-    T5_d&  b = ctx.get<T5_d>();
-    T5_dd& c = ctx.get<T5_dd>();
-    TINYTEST_ASSERT( ((&a == &b) && (&a == &c)) );
+    auto ctx = di::ContextReg<T5_dd>::create<di::Context>();  //all base types are in context, but only 1 derived instance
+    auto a = ctx->get<T5>();
+    auto b = ctx->get<T5_d>();
+    auto c = ctx->get<T5_dd>();
+    TINYTEST_ASSERT( ((a.get() == b.get()) && (a.get() == c.get())) );
     return 1;
 }
 
@@ -322,79 +308,26 @@ int test_poly4()
 {
     destructionMark.clear();
     {
-        di::ContextTmpl<T5_dd> ctx;   // all base types are in context, but only 1 derived instance
-        ctx.get<T5>();                // returns derived instance
+        di::ContextReg<T5_dd>::create<T5>(); // all base types are in context, but only 1 derived instance
     }
     TINYTEST_STR_EQUAL( "T5_ddT5_dT5", destructionMark.c_str() );   // derived and base destructors called
     return 1;
 }
 
 
-// class without factory method (3rd party) - compiles, but throws when used (no factory registered)
-int test_factory1()
+// polymorphic classes - abstract base
+int test_poly5()
 {
-    di::Context ctx;
-    try {
-        ctx.get<T6>();
-    } catch (std::runtime_error& e) {
-        //std::cout << e.what() << std::endl;
-        return 1;
-    }
-    TINYTEST_ASSERT( false );
-}
-
-
-// class without factory method (3rd party) - self standing factory method can be registered
-int test_factory2()
-{
-    di::ContextTmpl<> ctx(T6_factory);
-    TINYTEST_STR_EQUAL( "A", ctx.get<T6>().run().c_str() );
+    TINYTEST_STR_EQUAL( "A", di::ContextReg<T6_d>::create<T6>()->run().c_str() );
     return 1;
-}
-
-
-// class without factory method (3rd party), but other member named factory compiles and ignored
-int test_factory3()
-{
-    di::ContextTmpl<> ctx(T7_factory);
-    TINYTEST_STR_EQUAL( "A", ctx.get<T7>().run().c_str() );
-    return 1;
-}
-
-
-// multiple factories with the same return type are not allowed
-int test_factory4()
-{
-    try {
-        di::ContextTmpl<T9_A, T9_B> ctx;
-    } catch (std::runtime_error& e) {
-        //std::cout << e.what() << std::endl;
-        return 1;
-    }
-    TINYTEST_ASSERT( false );
-}
-
-
-// nullptr instance can't be added to the context
-int test_instance1()
-{
-    di::Context ctx;
-    try {
-        ctx.get<T8>();
-    } catch (std::runtime_error& e) {
-        //std::cout << e.what() << std::endl;
-        return 1;
-    }
-    TINYTEST_ASSERT( false );
 }
 
 
 // cyclic dependencies are detected runtime
-int test_cyclic()
+int test_cyclic1()
 {
-    di::Context ctx;
     try {
-        ctx.get<T10_A>();
+        di::Context::create<T7_A>();
     } catch (std::runtime_error& e) {
         //std::cout << e.what() << std::endl;
         return 1;
@@ -403,38 +336,79 @@ int test_cyclic()
 }
 
 
-// a class may depend on the Context itself
-int test_dependOnContext()
+// classes without singleton declaration are implicitly singleton
+int test_scope1()
 {
-    di::Context ctx;
-    TINYTEST_STR_EQUAL( "A", ctx.get<T11>().run().c_str() );
+    auto ctx = di::Context::create<di::Context>();
+    auto a = ctx->get<T8_A>();
+    auto b = ctx->get<T8_A>();
+    TINYTEST_ASSERT( a.get() == b.get() );
     return 1;
 }
 
-#endif
+// classes can be explicitly declared singleton
+int test_scope2()
+{
+    auto ctx = di::Context::create<di::Context>();
+    auto a = ctx->get<T8_B>();
+    auto b = ctx->get<T8_B>();
+    TINYTEST_ASSERT( a.get() == b.get() );
+    return 1;
+}
 
+// classes can be explicitly declared prototype
+int test_scope3()
+{
+    auto ctx = di::Context::create<di::Context>();
+    auto a = ctx->get<T8_C>();
+    auto b = ctx->get<T8_C>();
+    TINYTEST_ASSERT( a.get() != b.get() );
+    return 1;
+}
+
+// derived class inherits base scope if it has no scope declaration (does not fall back to default)
+int test_scope4()
+{
+    auto ctx = di::Context::create<di::Context>();
+    auto a = ctx->get<T8_C_d>();
+    auto b = ctx->get<T8_C_d>();
+    TINYTEST_ASSERT( a.get() != b.get() );
+    return 1;
+}
+
+// derived class can override bas scope
+int test_scope5()
+{
+    auto ctx = di::Context::create<di::Context>();
+    auto a = ctx->get<T8_B_d>();
+    auto b = ctx->get<T8_B_d>();
+    TINYTEST_ASSERT( a.get() != b.get() );
+    return 1;
+}
 
 
 TINYTEST_START_SUITE(DI_light);
     TINYTEST_ADD_TEST(test_transitive1);
-    TINYTEST_ADD_TEST(test_transitive2);
+    TINYTEST_ADD_TEST(test_transitive1i);
 
     TINYTEST_ADD_TEST(test_constDep1);
-    TINYTEST_ADD_TEST(test_constDep2);
+    TINYTEST_ADD_TEST(test_constDep1i);
 
     TINYTEST_ADD_TEST(test_poly1);
     TINYTEST_ADD_TEST(test_poly2);
     TINYTEST_ADD_TEST(test_poly2i);
+    TINYTEST_ADD_TEST(test_poly3);
+    TINYTEST_ADD_TEST(test_poly4);
+    TINYTEST_ADD_TEST(test_poly5);
 
-//    TINYTEST_ADD_TEST(test_poly3);
-//    TINYTEST_ADD_TEST(test_poly4);
-//    TINYTEST_ADD_TEST(test_factory1);
-//    TINYTEST_ADD_TEST(test_factory2);
-//    TINYTEST_ADD_TEST(test_factory3);
-//    TINYTEST_ADD_TEST(test_factory4);
-//    TINYTEST_ADD_TEST(test_instance1);
-//    TINYTEST_ADD_TEST(test_cyclic);
-//    TINYTEST_ADD_TEST(test_dependOnContext);
+    TINYTEST_ADD_TEST(test_cyclic1);
+
+    TINYTEST_ADD_TEST(test_scope1);
+    TINYTEST_ADD_TEST(test_scope2);
+    TINYTEST_ADD_TEST(test_scope3);
+    TINYTEST_ADD_TEST(test_scope4);
+    TINYTEST_ADD_TEST(test_scope5);
+
 TINYTEST_END_SUITE();
 
 
